@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全能数独求解器</title>
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --primary-color: #1890ff;
+            --success-color: #52c41a;
+            --error-color: #ff4d4f;
+            --warning-color: #faad14;
+            --text-color: #333;
+            --border-color: #d9d9d9;
+            --palace-border: #333;
+            --cell-size: 50px;
+            /* 求解高亮保持清晰 */
+            --solve-highlight: rgba(255, 251, 230, 0.8);
+            --logic-highlight: rgba(230, 255, 251, 0.8);
+            /* 选中同行列宫高亮大幅淡化 */
+            --highlight-color: rgba(24, 144, 255, 0.12);
+            --same-number-highlight: rgba(0, 0, 0, 0.08);
+            --selection-highlight: rgba(24, 144, 255, 0.3);
+            /* 约束线优化：加粗+淡色半透明 */
+            --thermometer-color: rgba(255, 77, 79, 0.55);
+            --whispers-color: rgba(114, 46, 209, 0.55);
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            color: var(--text-color);
+        }
+
+        h1 { margin-bottom: 20px; }
+
+        #menu-screen {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-top: 50px;
+            max-height: 80vh;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .type-btn {
+            padding: 15px 40px;
+            font-size: 18px;
+            border: 2px solid var(--primary-color);
+            background: white;
+            color: var(--primary-color);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .type-btn:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        #game-screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 700px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        .back-btn, .rules-btn {
+            padding: 8px 16px;
+            background: #fff;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .rules-btn {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        /* 带坐标的棋盘容器 */
+        .board-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .board-header {
+            display: flex;
+            margin-left: 25px;
+        }
+
+        .coord-cell {
+            width: var(--cell-size);
+            height: 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .board-content {
+            display: flex;
+        }
+
+        .board-sidebar {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-coord {
+            width: 25px;
+            height: var(--cell-size);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #666;
+            font-size: 14px;
+        }
+
+        /* 核心层级重构：约束线作为绝对底层背景 */
+        .board-container {
+            position: relative;
+            margin-bottom: 20px;
+            user-select: none;
+            background: white; /* 棋盘白色背景移到最外层容器 */
+            border-radius: 2px;
+        }
+
+        .sudoku-grid {
+            display: grid;
+            grid-template-columns: repeat(9, var(--cell-size));
+            grid-template-rows: repeat(9, var(--cell-size));
+            border: 2px solid var(--palace-border);
+            background: transparent; /* 网格背景透明，露出底层约束线 */
+            position: relative;
+            z-index: 1; /* 网格层在约束线层之上 */
+        }
+
+        .cell {
+            width: var(--cell-size);
+            height: var(--cell-size);
+            border: 1px solid var(--border-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            cursor: pointer;
+            position: relative;
+            box-sizing: border-box;
+            z-index: 1;
+        }
+
+        .cell:nth-child(3n) { border-right: 2px solid var(--palace-border); }
+        .cell:nth-child(9n) { border-right: none; }
+        
+        .cell.border-bottom { border-bottom: 2px solid var(--palace-border); }
+        .cell.border-right { border-right: 2px solid var(--palace-border); }
+
+        .cell.selected {
+            background-color: var(--highlight-color);
+            box-shadow: inset 0 0 0 2px var(--primary-color);
+            z-index: 9; /* 选中边框绝对置顶 */
+        }
+
+        .cell.highlighted {
+            background-color: var(--highlight-color);
+        }
+
+        .cell.same-number {
+            background-color: var(--same-number-highlight);
+        }
+
+        /* 求解高亮格子提升层级，确保不被遮挡 */
+        .cell.solving {
+            background-color: var(--solve-highlight);
+            z-index: 3;
+        }
+
+        .cell.logic-filled {
+            background-color: var(--logic-highlight);
+            z-index: 3;
+        }
+
+        .cell.error {
+            background-color: rgba(255, 242, 240, 0.7);
+        }
+        .cell.error-value {
+            color: var(--error-color);
+            font-weight: bold;
+        }
+
+        .cell.fixed {
+            font-weight: bold;
+            color: #000;
+        }
+
+        /* 绘制模式下的选中格子高亮 */
+        .cell.drawing-selected {
+            background-color: var(--selection-highlight);
+        }
+
+        /* 主数字样式 - 绝对置顶，不被任何元素遮挡 */
+        .main-number {
+            position: relative;
+            z-index: 8;
+            line-height: 1;
+        }
+
+        /* 标记数样式 - 层级高于笼数，绝对置顶 */
+        .markers-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            pointer-events: none;
+            z-index: 7;
+            padding: 2px 1px 1px 2px; /* 往右下偏移避让笼数 */
+            box-sizing: border-box;
+        }
+
+        .marker-num {
+            font-size: 10px;
+            color: #666;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        /* 杀手笼和数样式 - 层级低于标记数，高于背景 */
+        .cage-sum {
+            position: absolute;
+            top: 0px;
+            left: 1px;
+            font-size: 8px;
+            color: #333;
+            font-weight: bold;
+            line-height: 1;
+            z-index: 6;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 0px 2px;
+            border-radius: 2px;
+        }
+
+        /* 奇偶格背景半透明优化，清晰可见同时透出约束线 */
+        .cell.odd { background-color: rgba(19, 194, 194, 0.2); }
+        .cell.even { background-color: rgba(250, 140, 22, 0.2); }
+
+        /* SVG约束线层 - 绝对最底层，作为背景 */
+        .board-svg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0; /* 约束线在绝对最底层 */
+        }
+        .diagonal-line {
+            stroke: rgba(24, 144, 255, 0.25);
+            stroke-width: 3;
+            stroke-dasharray: 5, 5;
+        }
+        .continuous-edge {
+            stroke: var(--error-color);
+            stroke-width: 4;
+        }
+        /* 温度计线条加粗+淡色 */
+        .thermometer-line {
+            stroke: var(--thermometer-color);
+            stroke-width: 4;
+            stroke-linecap: round;
+            fill: none;
+        }
+        .thermometer-bulb {
+            fill: var(--thermometer-color);
+            r: 4.5;
+        }
+        /* 德耳语线条加粗+淡色 */
+        .whispers-line {
+            stroke: var(--whispers-color);
+            stroke-width: 4;
+            stroke-linecap: round;
+            stroke-dasharray: 8, 3;
+            fill: none;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .ctrl-btn {
+            padding: 8px 16px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .ctrl-btn.active {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+        .ctrl-btn.danger {
+            border-color: var(--error-color);
+            color: var(--error-color);
+        }
+        .ctrl-btn.thermo {
+            border-color: var(--thermometer-color);
+            color: #ff4d4f;
+        }
+        .ctrl-btn.thermo.active {
+            background: var(--thermometer-color);
+            color: white;
+            border-color: var(--thermometer-color);
+        }
+        .ctrl-btn.whispers {
+            border-color: var(--whispers-color);
+            color: #722ed1;
+        }
+        .ctrl-btn.whispers.active {
+            background: var(--whispers-color);
+            color: white;
+            border-color: var(--whispers-color);
+        }
+        .ctrl-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0 10px;
+        }
+        .speed-control input[type="number"] {
+            width: 60px;
+            padding: 4px 6px;
+            text-align: center;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .speed-label {
+            font-size: 13px;
+        }
+
+        .numpad {
+            display: grid;
+            grid-template-columns: repeat(9, 1fr);
+            gap: 8px;
+            width: 100%;
+            max-width: calc(var(--cell-size) * 9 + 40px);
+        }
+
+        .num-btn {
+            padding: 12px;
+            font-size: 20px;
+            border: none;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            cursor: pointer;
+        }
+        .num-btn:hover { background: #f0f0f0; }
+        .num-btn.action { font-size: 14px; color: #666; }
+        .num-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+        .modal p {
+            line-height: 1.6;
+            margin: 8px 0;
+        }
+        .modal input {
+            padding: 10px;
+            font-size: 18px;
+            width: 100px;
+            text-align: center;
+            margin: 10px 0;
+        }
+        .modal button {
+            padding: 8px 20px;
+            margin: 0 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 菜单界面 -->
+    <div id="menu-screen">
+        <h1>🧩 全能数独求解器</h1>
+        <button class="type-btn" onclick="startGame('classic')">经典数独</button>
+        <button class="type-btn" onclick="startGame('diagonal')">对角线数独</button>
+        <button class="type-btn" onclick="startGame('knight')">无马数独</button>
+        <button class="type-btn" onclick="startGame('odd_even')">奇偶数独</button>
+        <button class="type-btn" onclick="startGame('continuous')">连续数独</button>
+        <button class="type-btn" onclick="startGame('killer')">杀手数独</button>
+        <button class="type-btn" onclick="startGame('thermometer')">🌡️ 温度计数独</button>
+        <button class="type-btn" onclick="startGame('whispers')">🤫 德耳语数独</button>
+    </div>
+
+    <!-- 游戏界面 -->
+    <div id="game-screen">
+        <div class="header">
+            <button class="back-btn" onclick="backToMenu()">← 返回</button>
+            <div class="title" id="game-title">数独</div>
+            <button class="rules-btn" onclick="showRules()">📖 规则</button>
+        </div>
+
+        <!-- 特殊约束工具栏 -->
+        <div class="controls" id="constraint-tools"></div>
+
+        <!-- 标记功能控制区 -->
+        <div class="controls" id="marker-controls">
+            <button class="ctrl-btn" id="marker-mode-btn" onclick="toggleMarkerMode()">✏️ 标记模式</button>
+            <button class="ctrl-btn" id="auto-marker-btn" onclick="autoMarkCandidates()">🔮 一键标记候选数</button>
+            <button class="ctrl-btn danger" id="clear-markers-btn" onclick="clearAllMarkers()">🗑️ 清除所有标记</button>
+        </div>
+
+        <!-- 带坐标的棋盘 -->
+        <div class="board-wrapper">
+            <div class="board-header" id="board-header"></div>
+            <div class="board-content">
+                <div class="board-sidebar" id="board-sidebar"></div>
+                <div class="board-container" id="board-container">
+                    <!-- 约束线SVG层 - 绝对最底层 -->
+                    <svg class="board-svg-layer" id="board-svg" viewBox="0 0 450 450"></svg>
+                    <div class="sudoku-grid" id="sudoku-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作提示 -->
+        <div id="status-msg" style="height: 20px; margin-bottom: 10px; color: #666;"></div>
+
+        <!-- 核心功能按钮 -->
+        <div class="controls">
+            <button class="ctrl-btn" id="clear-btn" onclick="clearBoard()">清空盘面</button>
+            <button class="ctrl-btn" id="visualize-btn" onclick="toggleVisualize()">🔍 显示求解过程</button>
+            <div class="speed-control" id="speed-control" style="display: none;">
+                <span class="speed-label">速度:</span>
+                <input type="number" id="speed-input" min="1" value="100" step="1">
+                <span class="speed-label">次/秒</span>
+            </div>
+            <button class="ctrl-btn" id="solve-btn" onclick="solveBoard()">🚀 自动求解</button>
+        </div>
+
+        <!-- 数字键盘 -->
+        <div class="numpad" id="numpad">
+            <button class="num-btn" onclick="inputNum(1)">1</button>
+            <button class="num-btn" onclick="inputNum(2)">2</button>
+            <button class="num-btn" onclick="inputNum(3)">3</button>
+            <button class="num-btn" onclick="inputNum(4)">4</button>
+            <button class="num-btn" onclick="inputNum(5)">5</button>
+            <button class="num-btn" onclick="inputNum(6)">6</button>
+            <button class="num-btn" onclick="inputNum(7)">7</button>
+            <button class="num-btn" onclick="inputNum(8)">8</button>
+            <button class="num-btn" onclick="inputNum(9)">9</button>
+            <button class="num-btn action" id="undo-btn" onclick="undoMove()">↶ 撤回</button>
+            <button class="num-btn action" id="delete-btn" onclick="deleteNum()" style="grid-column: span 4;">⌫ 删除</button>
+        </div>
+    </div>
+
+    <!-- 杀手数独和值输入模态框 -->
+    <div id="killer-modal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <h3>输入笼子总和</h3>
+            <input type="number" id="killer-sum-input" min="1" max="45" placeholder="和">
+            <br>
+            <button onclick="confirmKillerCage()">确认</button>
+            <button onclick="cancelKillerCage()">取消</button>
+        </div>
+    </div>
+
+    <!-- 规则说明模态框 -->
+    <div id="rules-modal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <h3 id="rules-title">数独规则</h3>
+            <div id="rules-content"></div>
+            <br>
+            <button onclick="closeRules()">知道了</button>
+        </div>
+    </div>
+
+    <script>
+        // ================= 全局状态 =================
+        const STATE = {
+            type: 'classic',
+            grid: Array(81).fill(0),
+            fixed: Array(81).fill(false),
+            selected: -1,
+            history: [],
+            constraints: {
+                parity: {},
+                continuousEdges: new Set(),
+                killerCages: [],
+                thermometers: [],
+                whispers: []
+            },
+            mode: 'input',
+            tempSelection: [],
+            isSolving: false,
+            visualizeProcess: false,
+            solveSpeed: 100,
+            solutions: [],
+            recursionCount: 0,
+            markerMode: false,
+            markers: Array(81).fill().map(() => new Set())
+        };
+
+        // 全局映射表
+        let cellToCageMap = Array(81).fill(null);
+        let cellToThermometerMap = Array(81).fill(null);
+        let cellToWhispersMap = Array(81).fill(null);
+
+        // 常量配置：杀手笼颜色调高不透明度，清晰可见同时透出约束线
+        const CAGE_COLORS = [
+            'rgba(255, 179, 186, 0.4)',
+            'rgba(255, 223, 186, 0.4)',
+            'rgba(255, 255, 186, 0.4)',
+            'rgba(186, 255, 201, 0.4)',
+            'rgba(186, 225, 255, 0.4)',
+            'rgba(226, 186, 255, 0.4)',
+            'rgba(255, 194, 226, 0.4)',
+            'rgba(204, 255, 204, 0.4)',
+            'rgba(255, 224, 204, 0.4)',
+            'rgba(204, 245, 255, 0.4)'
+        ];
+        const SOLVER_CONFIG = {
+            maxSolutions: 2,
+            maxLogicLoop: 50
+        };
+        const SUDOKU_RULES = {
+            classic: `<p><strong>核心规则：</strong></p><p>每行必须包含数字1-9，且不能重复</p><p>每列必须包含数字1-9，且不能重复</p><p>每个3×3的九宫格必须包含数字1-9，且不能重复</p>`,
+            diagonal: `<p><strong>在经典数独规则基础上，增加：</strong></p><p>两条对角线（左上→右下，右上→左下）也必须包含数字1-9，且不能重复</p><p>💡 提示：对角线用蓝色虚线标出</p>`,
+            knight: `<p><strong>在经典数独规则基础上，增加：</strong></p><p>国际象棋中"马"走日字的两个格子，不能填相同的数字</p><p>💡 例如：如果(1,1)填了5，那么(2,3)和(3,2)都不能填5</p>`,
+            odd_even: `<p><strong>在经典数独规则基础上，增加：</strong></p><p>标记为<span style="color:#13c2c2;">青色</span>的格子必须填奇数(1,3,5,7,9)</p><p>标记为<span style="color:#fa8c16;">橙色</span>的格子必须填偶数(2,4,6,8)</p><p>💡 操作：点击"设置奇偶"按钮，然后点击格子循环切换：无→奇→偶→无</p>`,
+            continuous: `<p><strong>在经典数独规则基础上，增加：</strong></p><p>有<span style="color:#ff4d4f;">红色粗线</span>分隔的两个相邻格子，数字必须相差1</p><p>没有红色粗线分隔的两个相邻格子，数字绝对不能相差1</p><p>💡 操作：点击"添加连续约束"，然后依次点击两个相邻格子添加红线</p>`,
+            killer: `<p><strong>在经典数独规则基础上，增加：</strong></p><p>盘面被虚线分割成多个"笼子"，每个笼子左上角的数字是该笼子内所有数字的和</p><p>同一个笼子内的数字不能重复</p><p>💡 操作：点击"绘制笼子"，多选格子后按回车输入和，每个笼子用不同颜色区分</p>`,
+            thermometer: `<p><strong>在经典数独规则基础上，增加：</strong></p><p>每个温度计形状的红色线条，从圆形的"水银头"到线条尾部，数字必须严格递增</p><p>💡 操作：点击"绘制温度计"，依次点击格子形成路径（第一个点为水银头），完成后点击"完成绘制"</p>`,
+            whispers: `<p><strong>在经典数独规则基础上，增加：</strong></p><p>德耳语线上（紫色虚线）的任意两个相邻数字，差值的绝对值必须≥5</p><p>💡 操作：点击"绘制德耳语线"，依次点击格子形成路径，完成后点击"完成绘制"</p>`
+        };
+
+        // ================= 坐标渲染 =================
+        function renderCoordinates() {
+            const header = document.getElementById('board-header');
+            const sidebar = document.getElementById('board-sidebar');
+            
+            header.innerHTML = '';
+            sidebar.innerHTML = '';
+            
+            for (let i = 1; i <= 9; i++) {
+                const hCell = document.createElement('div');
+                hCell.className = 'coord-cell';
+                hCell.innerText = i;
+                header.appendChild(hCell);
+                
+                const vCell = document.createElement('div');
+                vCell.className = 'sidebar-coord';
+                vCell.innerText = i;
+                sidebar.appendChild(vCell);
+            }
+        }
+
+        // ================= 标记模式功能 =================
+        function toggleMarkerMode() {
+            STATE.markerMode = !STATE.markerMode;
+            const btn = document.getElementById('marker-mode-btn');
+            if (STATE.markerMode) {
+                btn.classList.add('active');
+                btn.innerText = '✏️ 标记模式 (开启)';
+                document.getElementById('status-msg').innerText = '标记模式已开启：点击数字键添加/移除标记';
+            } else {
+                btn.classList.remove('active');
+                btn.innerText = '✏️ 标记模式';
+                document.getElementById('status-msg').innerText = '';
+            }
+        }
+
+        function autoMarkCandidates() {
+            if (STATE.isSolving) return;
+            
+            const constraints = {
+                type: STATE.type,
+                parity: STATE.constraints.parity,
+                continuous: STATE.constraints.continuousEdges,
+                killer: STATE.constraints.killerCages,
+                thermometers: STATE.constraints.thermometers,
+                whispers: STATE.constraints.whispers
+            };
+            
+            for (let i = 0; i < 81; i++) {
+                if (STATE.grid[i] !== 0) {
+                    STATE.markers[i].clear();
+                    continue;
+                }
+                
+                const r = Math.floor(i / 9);
+                const c = i % 9;
+                const candidates = getValidCandidates(STATE.grid, r, c, constraints);
+                
+                STATE.markers[i].clear();
+                for (let num of candidates) {
+                    STATE.markers[i].add(num);
+                }
+            }
+            
+            renderGrid();
+            document.getElementById('status-msg').innerText = '已自动标记所有符合约束的候选数';
+        }
+
+        function clearAllMarkers() {
+            if (STATE.isSolving) return;
+            if (!confirm('确定要清除所有标记吗？')) return;
+            
+            for (let i = 0; i < 81; i++) {
+                STATE.markers[i].clear();
+            }
+            renderGrid();
+            document.getElementById('status-msg').innerText = '已清除所有标记';
+        }
+
+        // ================= 选中高亮功能 =================
+        function updateHighlights() {
+            const cells = document.querySelectorAll('.cell');
+            cells.forEach(c => c.classList.remove('highlighted', 'same-number'));
+            
+            if (STATE.selected === -1) return;
+            
+            const selectedR = Math.floor(STATE.selected / 9);
+            const selectedC = STATE.selected % 9;
+            const selectedVal = STATE.grid[STATE.selected];
+            
+            for (let i = 0; i < 81; i++) {
+                const r = Math.floor(i / 9);
+                const c = i % 9;
+                
+                if (r === selectedR || c === selectedC || 
+                    (Math.floor(r/3) === Math.floor(selectedR/3) && 
+                     Math.floor(c/3) === Math.floor(selectedC/3))) {
+                    if (i !== STATE.selected) {
+                        cells[i].classList.add('highlighted');
+                    }
+                }
+                
+                if (selectedVal !== 0 && STATE.grid[i] === selectedVal && i !== STATE.selected) {
+                    cells[i].classList.add('same-number');
+                }
+            }
+        }
+
+        // ================= 约束线条渲染 =================
+        function renderConstraintLines() {
+            const svg = document.getElementById('board-svg');
+            svg.innerHTML = '';
+
+            // 1. 对角线
+            if (STATE.type === 'diagonal') {
+                const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line1.setAttribute('x1', '0'); line1.setAttribute('y1', '0');
+                line1.setAttribute('x2', '450'); line1.setAttribute('y2', '450');
+                line1.setAttribute('class', 'diagonal-line');
+                const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line2.setAttribute('x1', '450'); line2.setAttribute('y1', '0');
+                line2.setAttribute('x2', '0'); line2.setAttribute('y2', '450');
+                line2.setAttribute('class', 'diagonal-line');
+                svg.appendChild(line1);
+                svg.appendChild(line2);
+            }
+
+            // 2. 连续数独红线
+            if (STATE.type === 'continuous') {
+                STATE.constraints.continuousEdges.forEach(key => {
+                    const [a, b] = key.split('-').map(Number);
+                    const r1 = Math.floor(a/9), c1 = a%9;
+                    const r2 = Math.floor(b/9), c2 = b%9;
+                    
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    line.setAttribute('class', 'continuous-edge');
+
+                    if (r1 === r2) {
+                        const x = Math.max(c1, c2) * 50;
+                        const yStart = r1 * 50;
+                        const yEnd = (r1 + 1) * 50;
+                        line.setAttribute('x1', x);
+                        line.setAttribute('y1', yStart);
+                        line.setAttribute('x2', x);
+                        line.setAttribute('y2', yEnd);
+                    } else if (c1 === c2) {
+                        const y = Math.max(r1, r2) * 50;
+                        const xStart = c1 * 50;
+                        const xEnd = (c1 + 1) * 50;
+                        line.setAttribute('x1', xStart);
+                        line.setAttribute('y1', y);
+                        line.setAttribute('x2', xEnd);
+                        line.setAttribute('y2', y);
+                    }
+                    svg.appendChild(line);
+                });
+            }
+
+            // 3. 温度计渲染
+            if (STATE.type === 'thermometer') {
+                STATE.constraints.thermometers.forEach(thermo => {
+                    if (thermo.path.length < 2) return;
+                    const points = thermo.path.map(idx => {
+                        const r = Math.floor(idx/9), c = idx%9;
+                        return `${c*50 +25} ${r*50 +25}`;
+                    }).join(' ');
+                    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                    polyline.setAttribute('points', points);
+                    polyline.setAttribute('class', 'thermometer-line');
+                    svg.appendChild(polyline);
+                    const headIdx = thermo.path[0];
+                    const hr = Math.floor(headIdx/9), hc = headIdx%9;
+                    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    circle.setAttribute('cx', hc*50 +25);
+                    circle.setAttribute('cy', hr*50 +25);
+                    circle.setAttribute('class', 'thermometer-bulb');
+                    svg.appendChild(circle);
+                });
+            }
+
+            // 4. 德耳语线渲染
+            if (STATE.type === 'whispers') {
+                STATE.constraints.whispers.forEach(whisper => {
+                    if (whisper.path.length < 2) return;
+                    const points = whisper.path.map(idx => {
+                        const r = Math.floor(idx/9), c = idx%9;
+                        return `${c*50 +25} ${r*50 +25}`;
+                    }).join(' ');
+                    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                    polyline.setAttribute('points', points);
+                    polyline.setAttribute('class', 'whispers-line');
+                    svg.appendChild(polyline);
+                });
+            }
+        }
+
+        // ================= 游戏初始化 =================
+        function startGame(type) {
+            STATE.type = type;
+            STATE.grid = Array(81).fill(0);
+            STATE.fixed = Array(81).fill(false);
+            STATE.history = [];
+            STATE.selected = -1;
+            STATE.mode = 'input';
+            STATE.tempSelection = [];
+            STATE.constraints = { 
+                parity: {}, 
+                continuousEdges: new Set(), 
+                killerCages: [],
+                thermometers: [],
+                whispers: []
+            };
+            STATE.isSolving = false;
+            STATE.solutions = [];
+            STATE.recursionCount = 0;
+            STATE.markerMode = false;
+            STATE.markers = Array(81).fill().map(() => new Set());
+            
+            cellToCageMap = Array(81).fill(null);
+            cellToThermometerMap = Array(81).fill(null);
+            cellToWhispersMap = Array(81).fill(null);
+
+            document.getElementById('menu-screen').style.display = 'none';
+            document.getElementById('game-screen').style.display = 'flex';
+            
+            const titles = {
+                'classic': '经典数独',
+                'diagonal': '对角线数独',
+                'knight': '无马数独',
+                'odd_even': '奇偶数独',
+                'continuous': '连续数独',
+                'killer': '杀手数独',
+                'thermometer': '温度计数独',
+                'whispers': '德耳语数独'
+            };
+            document.getElementById('game-title').innerText = titles[type];
+
+            renderCoordinates();
+            renderGrid();
+            renderTools();
+            renderConstraintLines();
+            setButtonsEnabled(true);
+            document.getElementById('speed-input').value = STATE.solveSpeed;
+            
+            const markerBtn = document.getElementById('marker-mode-btn');
+            markerBtn.classList.remove('active');
+            markerBtn.innerText = '✏️ 标记模式';
+        }
+
+        function backToMenu() {
+            STATE.isSolving = false;
+            document.getElementById('menu-screen').style.display = 'flex';
+            document.getElementById('game-screen').style.display = 'none';
+        }
+
+        function showRules() {
+            const titles = {
+                'classic': '经典数独规则',
+                'diagonal': '对角线数独规则',
+                'knight': '无马数独规则',
+                'odd_even': '奇偶数独规则',
+                'continuous': '连续数独规则',
+                'killer': '杀手数独规则',
+                'thermometer': '温度计数独规则',
+                'whispers': '德耳语数独规则'
+            };
+            document.getElementById('rules-title').innerText = titles[STATE.type];
+            document.getElementById('rules-content').innerHTML = SUDOKU_RULES[STATE.type];
+            document.getElementById('rules-modal').style.display = 'flex';
+        }
+
+        function closeRules() {
+            document.getElementById('rules-modal').style.display = 'none';
+        }
+
+        // ================= 棋盘渲染 =================
+        function renderGrid() {
+            const container = document.getElementById('sudoku-grid');
+            container.innerHTML = '';
+            
+            for (let i = 0; i < 81; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                cell.dataset.idx = i;
+                
+                const r = Math.floor(i / 9);
+                const c = i % 9;
+                
+                if (c === 2 || c === 5) cell.classList.add('border-right');
+                if (r === 2 || r === 5) cell.classList.add('border-bottom');
+
+                // 主数字 - 用span包裹确保层级置顶
+                if (STATE.grid[i] !== 0) {
+                    const numSpan = document.createElement('span');
+                    numSpan.className = 'main-number';
+                    numSpan.innerText = STATE.grid[i];
+                    cell.appendChild(numSpan);
+                    if (STATE.fixed[i]) cell.classList.add('fixed');
+                } else {
+                    // 标记数容器
+                    const markersContainer = document.createElement('div');
+                    markersContainer.className = 'markers-container';
+                    
+                    for (let num = 1; num <= 9; num++) {
+                        const markerSpan = document.createElement('span');
+                        markerSpan.className = 'marker-num';
+                        if (STATE.markers[i].has(num)) {
+                            markerSpan.innerText = num;
+                        }
+                        markersContainer.appendChild(markerSpan);
+                    }
+                    
+                    cell.appendChild(markersContainer);
+                }
+
+                if (STATE.type === 'odd_even') {
+                    if (STATE.constraints.parity[i] === 'odd') cell.classList.add('odd');
+                    if (STATE.constraints.parity[i] === 'even') cell.classList.add('even');
+                }
+
+                if (i === STATE.selected) cell.classList.add('selected');
+
+                // 绘制模式下的选中格子高亮
+                if ((STATE.mode === 'thermometer' || STATE.mode === 'whispers') && STATE.tempSelection.includes(i)) {
+                    cell.classList.add('drawing-selected');
+                }
+
+                if (STATE.mode === 'killer_select' && STATE.tempSelection.includes(i)) {
+                    cell.style.backgroundColor = 'rgba(24, 144, 255, 0.3)';
+                }
+
+                cell.onclick = () => handleCellClick(i);
+                container.appendChild(cell);
+            }
+            
+            checkErrors();
+            updateHighlights();
+            if (STATE.type === 'killer') renderKillerBackground();
+        }
+
+        // ================= 工具栏渲染 =================
+        function renderTools() {
+            const tools = document.getElementById('constraint-tools');
+            tools.innerHTML = '';
+            const msg = document.getElementById('status-msg');
+            if (!STATE.markerMode) msg.innerText = '';
+
+            // 奇偶数独工具
+            if (STATE.type === 'odd_even') {
+                const btn1 = document.createElement('button');
+                btn1.className = 'ctrl-btn ' + (STATE.mode === 'parity' ? 'active' : '');
+                btn1.innerText = '设置奇偶 (点击切换)';
+                btn1.onclick = () => {
+                    STATE.mode = STATE.mode === 'parity' ? 'input' : 'parity';
+                    renderTools();
+                };
+                tools.appendChild(btn1);
+                if (STATE.mode === 'parity' && !STATE.markerMode) msg.innerText = '提示：点击格子切换：无->奇(青)->偶(橙)->无';
+            }
+
+            // 连续数独工具
+            if (STATE.type === 'continuous') {
+                const btn1 = document.createElement('button');
+                btn1.className = 'ctrl-btn ' + (STATE.mode === 'continuous' ? 'active' : '');
+                btn1.innerText = '添加连续约束';
+                btn1.onclick = () => {
+                    STATE.mode = STATE.mode === 'continuous' ? 'input' : 'continuous';
+                    STATE.tempSelection = [];
+                    renderTools();
+                    renderGrid();
+                };
+                tools.appendChild(btn1);
+                if (STATE.mode === 'continuous' && !STATE.markerMode) msg.innerText = '提示：依次点击两个相邻的格子添加红线';
+            }
+
+            // 杀手数独工具
+            if (STATE.type === 'killer') {
+                const btn1 = document.createElement('button');
+                btn1.className = 'ctrl-btn ' + (STATE.mode === 'killer_select' ? 'active' : '');
+                btn1.innerText = '绘制笼子';
+                btn1.onclick = () => {
+                    STATE.mode = STATE.mode === 'killer_select' ? 'input' : 'killer_select';
+                    STATE.tempSelection = [];
+                    renderTools();
+                    renderGrid();
+                };
+                tools.appendChild(btn1);
+
+                const btn2 = document.createElement('button');
+                btn2.className = 'ctrl-btn danger';
+                btn2.innerText = '清除笼子';
+                btn2.onclick = () => {
+                    STATE.constraints.killerCages = [];
+                    cellToCageMap = Array(81).fill(null);
+                    renderGrid();
+                    renderConstraintLines();
+                };
+                tools.appendChild(btn2);
+
+                if (STATE.mode === 'killer_select' && !STATE.markerMode) msg.innerText = '提示：点击选择多个格子，选完按回车或点击"确认和"';
+                
+                if (STATE.tempSelection.length > 0) {
+                    const btn3 = document.createElement('button');
+                    btn3.className = 'ctrl-btn';
+                    btn3.style.background = '#52c41a';
+                    btn3.style.color = 'white';
+                    btn3.innerText = `确认选中的${STATE.tempSelection.length}格 ->`;
+                    btn3.onclick = showKillerModal;
+                    tools.appendChild(btn3);
+                }
+            }
+
+            // 温度计数独工具
+            if (STATE.type === 'thermometer') {
+                const btn1 = document.createElement('button');
+                btn1.className = 'ctrl-btn thermo ' + (STATE.mode === 'thermometer' ? 'active' : '');
+                btn1.innerText = '绘制温度计';
+                btn1.onclick = () => {
+                    STATE.mode = STATE.mode === 'thermometer' ? 'input' : 'thermometer';
+                    STATE.tempSelection = [];
+                    renderTools();
+                    renderGrid();
+                };
+                tools.appendChild(btn1);
+
+                if (STATE.mode === 'thermometer' && STATE.tempSelection.length >= 2) {
+                    const btn2 = document.createElement('button');
+                    btn2.className = 'ctrl-btn thermo active';
+                    btn2.innerText = '✅ 完成绘制';
+                    btn2.onclick = confirmThermometer;
+                    tools.appendChild(btn2);
+                }
+
+                const btn3 = document.createElement('button');
+                btn3.className = 'ctrl-btn danger';
+                btn3.innerText = '清除所有温度计';
+                btn3.onclick = () => {
+                    STATE.constraints.thermometers = [];
+                    cellToThermometerMap = Array(81).fill(null);
+                    renderConstraintLines();
+                    renderGrid();
+                };
+                tools.appendChild(btn3);
+
+                if (STATE.mode === 'thermometer' && !STATE.markerMode) {
+                    msg.innerText = '提示：依次点击格子绘制温度计（可斜向），第一个点为水银头';
+                }
+            }
+
+            // 德耳语数独工具
+            if (STATE.type === 'whispers') {
+                const btn1 = document.createElement('button');
+                btn1.className = 'ctrl-btn whispers ' + (STATE.mode === 'whispers' ? 'active' : '');
+                btn1.innerText = '绘制德耳语线';
+                btn1.onclick = () => {
+                    STATE.mode = STATE.mode === 'whispers' ? 'input' : 'whispers';
+                    STATE.tempSelection = [];
+                    renderTools();
+                    renderGrid();
+                };
+                tools.appendChild(btn1);
+
+                if (STATE.mode === 'whispers' && STATE.tempSelection.length >= 2) {
+                    const btn2 = document.createElement('button');
+                    btn2.className = 'ctrl-btn whispers active';
+                    btn2.innerText = '✅ 完成绘制';
+                    btn2.onclick = confirmWhispers;
+                    tools.appendChild(btn2);
+                }
+
+                const btn3 = document.createElement('button');
+                btn3.className = 'ctrl-btn danger';
+                btn3.innerText = '清除所有德耳语线';
+                btn3.onclick = () => {
+                    STATE.constraints.whispers = [];
+                    cellToWhispersMap = Array(81).fill(null);
+                    renderConstraintLines();
+                    renderGrid();
+                };
+                tools.appendChild(btn3);
+
+                if (STATE.mode === 'whispers' && !STATE.markerMode) {
+                    msg.innerText = '提示：依次点击格子绘制德耳语线（可斜向），线上格子不能填5';
+                }
+            }
+        }
+
+        // ================= 温度计绘制确认 =================
+        function confirmThermometer() {
+            if (STATE.tempSelection.length < 2) return;
+            
+            const newThermo = { path: [...STATE.tempSelection] };
+            STATE.constraints.thermometers.push(newThermo);
+            
+            for (let idx of newThermo.path) {
+                cellToThermometerMap[idx] = newThermo;
+            }
+
+            STATE.tempSelection = [];
+            STATE.mode = 'input';
+            renderConstraintLines();
+            renderTools();
+            renderGrid();
+            document.getElementById('status-msg').innerText = `温度计绘制完成，共${newThermo.path.length}格`;
+        }
+
+        // ================= 德耳语线绘制确认 =================
+        function confirmWhispers() {
+            if (STATE.tempSelection.length < 2) return;
+            
+            const newWhisper = { path: [...STATE.tempSelection] };
+            STATE.constraints.whispers.push(newWhisper);
+            
+            for (let idx of newWhisper.path) {
+                cellToWhispersMap[idx] = newWhisper;
+            }
+
+            STATE.tempSelection = [];
+            STATE.mode = 'input';
+            renderConstraintLines();
+            renderTools();
+            renderGrid();
+            document.getElementById('status-msg').innerText = `德耳语线绘制完成，共${newWhisper.path.length}格`;
+        }
+
+        function renderKillerBackground() {
+            const cells = document.querySelectorAll('.cell');
+            cells.forEach((cell, idx) => {
+                const oldSum = cell.querySelector('.cage-sum');
+                if (oldSum) oldSum.remove();
+
+                const cage = cellToCageMap[idx];
+                if (cage) {
+                    cell.style.backgroundColor = cage.color;
+                    if (idx === cage.topLeftIdx) {
+                        const sumSpan = document.createElement('span');
+                        sumSpan.className = 'cage-sum';
+                        sumSpan.innerText = cage.sum;
+                        cell.appendChild(sumSpan);
+                    }
+                } else {
+                    if (!STATE.tempSelection.includes(idx)) {
+                        cell.style.backgroundColor = '';
+                    }
+                }
+            });
+        }
+
+        // ================= 格子点击交互 =================
+        function handleCellClick(idx) {
+            if (STATE.isSolving) return;
+            
+            // 温度计绘制模式
+            if (STATE.mode === 'thermometer') {
+                if (STATE.tempSelection.includes(idx)) return;
+                STATE.tempSelection.push(idx);
+                renderTools();
+                renderGrid();
+                return;
+            }
+
+            // 德耳语线绘制模式
+            if (STATE.mode === 'whispers') {
+                if (STATE.tempSelection.includes(idx)) return;
+                STATE.tempSelection.push(idx);
+                renderTools();
+                renderGrid();
+                return;
+            }
+
+            // 原有模式
+            if (STATE.mode === 'input') {
+                STATE.selected = idx;
+                renderGrid();
+            } else if (STATE.mode === 'parity') {
+                toggleParity(idx);
+            } else if (STATE.mode === 'continuous') {
+                selectContinuous(idx);
+            } else if (STATE.mode === 'killer_select') {
+                selectKiller(idx);
+            }
+        }
+
+        // ================= 数字输入 =================
+        function inputNum(n) {
+            if (STATE.isSolving || STATE.selected === -1) return;
+            
+            if (STATE.markerMode) {
+                if (STATE.grid[STATE.selected] !== 0) return;
+                // 德耳语线上的格子不能标记5
+                if (STATE.type === 'whispers' && cellToWhispersMap[STATE.selected] && n === 5) {
+                    document.getElementById('status-msg').innerText = '德耳语线上的格子不能填/标记5！';
+                    return;
+                }
+                if (STATE.markers[STATE.selected].has(n)) {
+                    STATE.markers[STATE.selected].delete(n);
+                } else {
+                    STATE.markers[STATE.selected].add(n);
+                }
+                renderGrid();
+            } else {
+                if (STATE.fixed[STATE.selected]) return;
+                // 德耳语线上的格子不能填5
+                if (STATE.type === 'whispers' && cellToWhispersMap[STATE.selected] && n === 5) {
+                    document.getElementById('status-msg').innerText = '德耳语线上的格子不能填5！';
+                    return;
+                }
+                STATE.history.push([...STATE.grid]);
+                STATE.grid[STATE.selected] = n;
+                STATE.markers[STATE.selected].clear();
+                renderGrid();
+            }
+        }
+
+        // ================= 删除功能 =================
+        function deleteNum() {
+            if (STATE.isSolving || STATE.selected === -1) return;
+            
+            if (STATE.markerMode) {
+                STATE.markers[STATE.selected].clear();
+                renderGrid();
+            } else {
+                if (STATE.fixed[STATE.selected]) return;
+                STATE.history.push([...STATE.grid]);
+                STATE.grid[STATE.selected] = 0;
+                renderGrid();
+            }
+        }
+
+        function undoMove() {
+            if (STATE.isSolving || STATE.history.length === 0) return;
+            STATE.grid = STATE.history.pop();
+            renderGrid();
+        }
+
+        // 键盘快捷键
+        document.addEventListener('keydown', (e) => {
+            if (document.getElementById('game-screen').style.display !== 'flex' || STATE.isSolving) return;
+            
+            if (e.key >= '1' && e.key <= '9') inputNum(parseInt(e.key));
+            if (e.key === 'Backspace' || e.key === 'Delete') deleteNum();
+            if (e.key === 'z' && (e.ctrlKey || e.metaKey)) undoMove();
+            
+            if (STATE.mode === 'killer_select' && e.key === 'Enter' && STATE.tempSelection.length > 0) {
+                showKillerModal();
+            }
+            if ((STATE.mode === 'thermometer' || STATE.mode === 'whispers') && e.key === 'Enter' && STATE.tempSelection.length >= 2) {
+                if (STATE.mode === 'thermometer') confirmThermometer();
+                if (STATE.mode === 'whispers') confirmWhispers();
+            }
+        });
+
+        function toggleParity(idx) {
+            const current = STATE.constraints.parity[idx];
+            if (!current) STATE.constraints.parity[idx] = 'odd';
+            else if (current === 'odd') STATE.constraints.parity[idx] = 'even';
+            else delete STATE.constraints.parity[idx];
+            renderGrid();
+        }
+
+        function selectContinuous(idx) {
+            if (STATE.tempSelection.length === 0) {
+                STATE.tempSelection.push(idx);
+            } else if (STATE.tempSelection.length === 1) {
+                const first = STATE.tempSelection[0];
+                const r1 = Math.floor(first/9), c1 = first%9;
+                const r2 = Math.floor(idx/9), c2 = idx%9;
+                const isAdjacent = (Math.abs(r1-r2) + Math.abs(c1-c2)) === 1;
+                
+                if (isAdjacent && first !== idx) {
+                    const key = [Math.min(first, idx), Math.max(first, idx)].join('-');
+                    if (STATE.constraints.continuousEdges.has(key)) {
+                        STATE.constraints.continuousEdges.delete(key);
+                    } else {
+                        STATE.constraints.continuousEdges.add(key);
+                    }
+                    renderConstraintLines();
+                } else {
+                    alert('请选择相邻的格子！');
+                }
+                STATE.tempSelection = [];
+            }
+            renderGrid();
+        }
+
+        function selectKiller(idx) {
+            const i = STATE.tempSelection.indexOf(idx);
+            if (i >= 0) {
+                STATE.tempSelection.splice(i, 1);
+            } else {
+                if (cellToCageMap[idx] === null) {
+                    STATE.tempSelection.push(idx);
+                }
+            }
+            renderGrid();
+            renderTools();
+        }
+
+        function showKillerModal() {
+            document.getElementById('killer-modal').style.display = 'flex';
+            document.getElementById('killer-sum-input').value = '';
+            document.getElementById('killer-sum-input').focus();
+        }
+
+        function confirmKillerCage() {
+            const sum = parseInt(document.getElementById('killer-sum-input').value);
+            if (!sum || sum < 1) return;
+            
+            const sortedIdxs = STATE.tempSelection.sort((a, b) => {
+                const r1 = Math.floor(a/9), c1 = a%9;
+                const r2 = Math.floor(b/9), c2 = b%9;
+                if (r1 !== r2) return r1 - r2;
+                return c1 - c2;
+            });
+            const topLeftIdx = sortedIdxs[0];
+
+            const colorIdx = STATE.constraints.killerCages.length % CAGE_COLORS.length;
+            const newCage = {
+                idxs: [...STATE.tempSelection],
+                sum: sum,
+                color: CAGE_COLORS[colorIdx],
+                topLeftIdx: topLeftIdx
+            };
+
+            STATE.constraints.killerCages.push(newCage);
+            for (let idx of newCage.idxs) {
+                cellToCageMap[idx] = newCage;
+            }
+
+            STATE.tempSelection = [];
+            document.getElementById('killer-modal').style.display = 'none';
+            renderGrid();
+            renderTools();
+        }
+
+        function cancelKillerCage() {
+            document.getElementById('killer-modal').style.display = 'none';
+        }
+
+        // ================= 错误检查 =================
+        function checkErrors() {
+            const cells = document.querySelectorAll('.cell');
+            cells.forEach(c => c.classList.remove('error', 'error-value', 'solving', 'logic-filled'));
+
+            const usedRows = new Map();
+            const usedCols = new Map();
+            const usedPals = new Map();
+
+            for(let i=0; i<9; i++) { usedRows.set(i, new Map()); usedCols.set(i, new Map()); usedPals.set(i, new Map()); }
+
+            for (let i = 0; i < 81; i++) {
+                const val = STATE.grid[i];
+                if (val === 0) continue;
+                const r = Math.floor(i/9);
+                const c = i % 9;
+                const p = Math.floor(r/3)*3 + Math.floor(c/3);
+
+                const addToMap = (map, key, idx) => {
+                    if (!map.get(key).has(val)) map.get(key).set(val, []);
+                    map.get(key).get(val).push(idx);
+                };
+                addToMap(usedRows, r, i);
+                addToMap(usedCols, c, i);
+                addToMap(usedPals, p, i);
+            }
+
+            const markError = (map) => {
+                map.forEach((innerMap) => {
+                    innerMap.forEach((idxs, val) => {
+                        if (idxs.length > 1) {
+                            idxs.forEach(idx => {
+                                cells[idx].classList.add('error');
+                                cells[idx].classList.add('error-value');
+                            });
+                        }
+                    });
+                });
+            };
+            markError(usedRows); markError(usedCols); markError(usedPals);
+        }
+
+        function clearBoard() {
+            if(STATE.isSolving) return;
+            if(!confirm('确定要清空整个盘面吗？')) return;
+            STATE.grid = Array(81).fill(0);
+            STATE.fixed = Array(81).fill(false);
+            STATE.history = [];
+            for (let i = 0; i < 81; i++) {
+                STATE.markers[i].clear();
+            }
+            renderGrid();
+        }
+
+        function toggleVisualize() {
+            STATE.visualizeProcess = !STATE.visualizeProcess;
+            const btn = document.getElementById('visualize-btn');
+            const speedControl = document.getElementById('speed-control');
+            
+            if (STATE.visualizeProcess) {
+                btn.classList.add('active');
+                btn.innerText = '🔍 隐藏求解过程';
+                speedControl.style.display = 'flex';
+            } else {
+                btn.classList.remove('active');
+                btn.innerText = '🔍 显示求解过程';
+                speedControl.style.display = 'none';
+            }
+        }
+
+        document.getElementById('speed-input').addEventListener('change', (e) => {
+            let value = parseInt(e.target.value);
+            if (isNaN(value) || value < 1) value = 1;
+            value = Math.floor(value);
+            STATE.solveSpeed = value;
+            e.target.value = value;
+        });
+
+        function setButtonsEnabled(enabled) {
+            document.getElementById('solve-btn').disabled = !enabled;
+            document.getElementById('clear-btn').disabled = !enabled;
+            document.getElementById('undo-btn').disabled = !enabled;
+            document.getElementById('delete-btn').disabled = !enabled;
+            document.querySelectorAll('.num-btn').forEach(btn => btn.disabled = !enabled);
+            document.querySelectorAll('.ctrl-btn').forEach(btn => {
+                if (btn.id !== 'visualize-btn' && btn.id !== 'speed-input' && 
+                    btn.id !== 'marker-mode-btn' && btn.id !== 'auto-marker-btn' && 
+                    btn.id !== 'clear-markers-btn') {
+                    btn.disabled = !enabled;
+                }
+            });
+        }
+
+        // ================= 核心求解器与约束校验 =================
+        const MIN_SUM = [0, 1, 3, 6, 10, 15, 21, 28, 36, 45];
+        const MAX_SUM = [0, 9, 17, 24, 30, 35, 39, 42, 44, 45];
+
+        function isValidBasic(flatBoard, r, c, num) {
+            const rowStart = r * 9;
+            for (let i = 0; i < 9; i++) {
+                if (flatBoard[rowStart + i] === num && i !== c) return false;
+            }
+            for (let i = 0; i < 9; i++) {
+                if (flatBoard[i * 9 + c] === num && i !== r) return false;
+            }
+            const br = (r / 3 | 0) * 3;
+            const bc = (c / 3 | 0) * 3;
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    const idx = (br + i) * 9 + (bc + j);
+                    if (flatBoard[idx] === num && (br + i !== r || bc + j !== c)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        function getKillerCandidates(flatBoard, r, c) {
+            const idx = r * 9 + c;
+            const cage = cellToCageMap[idx];
+            
+            let candidates = [];
+            for (let num = 1; num <= 9; num++) {
+                if (isValidBasic(flatBoard, r, c, num)) {
+                    candidates.push(num);
+                }
+            }
+
+            if (!cage) return candidates;
+
+            let currentSum = 0;
+            let emptyCount = 0;
+            const usedNums = new Set();
+            for (let i = 0; i < cage.idxs.length; i++) {
+                const cellIdx = cage.idxs[i];
+                const val = flatBoard[cellIdx];
+                if (val === 0) {
+                    emptyCount++;
+                } else {
+                    currentSum += val;
+                    usedNums.add(val);
+                }
+            }
+
+            const remainingSum = cage.sum - currentSum;
+            const newEmptyCount = emptyCount - 1;
+
+            const filtered = [];
+            for (let i = 0; i < candidates.length; i++) {
+                const num = candidates[i];
+                if (usedNums.has(num)) continue;
+                const newRemaining = remainingSum - num;
+                if (newRemaining < 0) continue;
+                if (newEmptyCount > 0) {
+                    if (newRemaining < newEmptyCount) continue;
+                    if (newRemaining > newEmptyCount * 9) continue;
+                } else {
+                    if (newRemaining !== 0) continue;
+                }
+                filtered.push(num);
+            }
+
+            return filtered;
+        }
+
+        // 温度计数独约束校验与候选数计算
+        function getThermometerValidRange(flatBoard, idx, thermo) {
+            const posInThermo = thermo.path.indexOf(idx);
+            const pathLen = thermo.path.length;
+            
+            let minVal = posInThermo + 1;
+            let maxVal = 9 - (pathLen - 1 - posInThermo);
+
+            for (let i = 0; i < posInThermo; i++) {
+                const prevVal = flatBoard[thermo.path[i]];
+                if (prevVal !== 0) {
+                    minVal = Math.max(minVal, prevVal + 1);
+                }
+            }
+
+            for (let i = posInThermo + 1; i < pathLen; i++) {
+                const nextVal = flatBoard[thermo.path[i]];
+                if (nextVal !== 0) {
+                    maxVal = Math.min(maxVal, nextVal - 1);
+                }
+            }
+
+            return { minVal, maxVal };
+        }
+
+        function checkThermometerConstraint(flatBoard, r, c, num) {
+            const idx = r * 9 + c;
+            const thermo = cellToThermometerMap[idx];
+            if (!thermo) return true;
+
+            const { minVal, maxVal } = getThermometerValidRange(flatBoard, idx, thermo);
+            if (num < minVal || num > maxVal) return false;
+
+            return true;
+        }
+
+        // 德耳语数独约束校验与候选数计算
+        function checkWhispersConstraint(flatBoard, r, c, num) {
+            const idx = r * 9 + c;
+            const whisper = cellToWhispersMap[idx];
+            if (!whisper) return true;
+
+            if (num === 5) return false;
+
+            const posInWhisper = whisper.path.indexOf(idx);
+            if (posInWhisper > 0) {
+                const prevIdx = whisper.path[posInWhisper - 1];
+                const prevVal = flatBoard[prevIdx];
+                if (prevVal !== 0 && Math.abs(num - prevVal) < 5) return false;
+            }
+            if (posInWhisper < whisper.path.length - 1) {
+                const nextIdx = whisper.path[posInWhisper + 1];
+                const nextVal = flatBoard[nextIdx];
+                if (nextVal !== 0 && Math.abs(num - nextVal) < 5) return false;
+            }
+
+            return true;
+        }
+
+        // 候选数获取
+        function getValidCandidates(flatBoard, r, c, constraints) {
+            if (constraints.type === 'killer') {
+                return getKillerCandidates(flatBoard, r, c);
+            }
+            
+            const candidates = [];
+            for (let num = 1; num <= 9; num++) {
+                if (isValidPlacement(flatBoard, r, c, num, constraints)) {
+                    candidates.push(num);
+                }
+            }
+            return candidates;
+        }
+
+        // 逻辑推理
+        function fullLogicInference(flatBoard, constraints) {
+            let loopCount = 0;
+            let hasProgress = true;
+
+            while (hasProgress && loopCount < SOLVER_CONFIG.maxLogicLoop) {
+                loopCount++;
+                hasProgress = false;
+
+                for (let i = 0; i < 81; i++) {
+                    if (flatBoard[i] !== 0) continue;
+                    const r = (i / 9) | 0;
+                    const c = i % 9;
+                    const candidates = getValidCandidates(flatBoard, r, c, constraints);
+                    if (candidates.length === 1) {
+                        flatBoard[i] = candidates[0];
+                        hasProgress = true;
+                    } else if (candidates.length === 0) {
+                        return -1;
+                    }
+                }
+            }
+
+            return loopCount;
+        }
+
+        // 修复：批量更新可视化时，确保空格子能正确显示数字
+        async function batchUpdateVisual(oldBoard, newBoard) {
+            const cells = document.querySelectorAll('.cell');
+            for (let i = 0; i < 81; i++) {
+                if (oldBoard[i] !== newBoard[i] && newBoard[i] !== 0) {
+                    STATE.grid[i] = newBoard[i];
+                    const cell = cells[i];
+                    // 清除标记数，避免和数字重叠
+                    cell.querySelector('.markers-container')?.remove();
+                    // 检查是否有主数字span，没有就创建
+                    let numSpan = cell.querySelector('.main-number');
+                    if (!numSpan) {
+                        numSpan = document.createElement('span');
+                        numSpan.className = 'main-number';
+                        cell.appendChild(numSpan);
+                    }
+                    numSpan.innerText = newBoard[i];
+                    cell.classList.add('logic-filled');
+                }
+            }
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // 主求解函数
+        async function solveBoard() {
+            if (STATE.isSolving) return;
+            
+            for (let i = 0; i < 81; i++) {
+                if (STATE.grid[i] !== 0) STATE.fixed[i] = true;
+            }
+            renderGrid();
+
+            STATE.isSolving = true;
+            STATE.solutions = [];
+            STATE.recursionCount = 0;
+            setButtonsEnabled(false);
+
+            const flatBoard = [...STATE.grid];
+            const constraints = {
+                type: STATE.type,
+                parity: STATE.constraints.parity,
+                continuous: STATE.constraints.continuousEdges,
+                killer: STATE.constraints.killerCages,
+                thermometers: STATE.constraints.thermometers,
+                whispers: STATE.constraints.whispers
+            };
+
+            document.getElementById('status-msg').innerText = '正在执行初始逻辑推演...';
+            const initialLoopCount = fullLogicInference(flatBoard, constraints);
+            
+            if (STATE.visualizeProcess) {
+                await batchUpdateVisual(STATE.grid, flatBoard);
+                await sleep(1000 / STATE.solveSpeed);
+            }
+
+            const initialSolvedCount = flatBoard.filter(x => x !== 0).length;
+            document.getElementById('status-msg').innerText = 
+                `初始推演完成：${initialLoopCount}轮，已确定${initialSolvedCount}/81个数字`;
+            await sleep(500);
+
+            if (initialSolvedCount < 81) {
+                document.getElementById('status-msg').innerText = '启动混合算法求解...';
+                await hybridBacktrack(flatBoard, constraints);
+            } else {
+                STATE.solutions.push([...flatBoard]);
+            }
+
+            STATE.isSolving = false;
+            setButtonsEnabled(true);
+            document.getElementById('status-msg').innerText = 
+                `求解完成！共执行${STATE.recursionCount}次递归`;
+
+            if (STATE.solutions.length === 0) {
+                alert('❌ 该数独无解，请检查题目或约束是否正确');
+            } else if (STATE.solutions.length === 1) {
+                alert('✅ 找到唯一合法解');
+            } else {
+                alert(`⚠️  发现${STATE.solutions.length}个有效解，将使用第一个解`);
+            }
+
+            if (STATE.solutions.length > 0) {
+                const finalBoard = STATE.solutions[0];
+                for (let i = 0; i < 81; i++) {
+                    STATE.grid[i] = finalBoard[i];
+                    STATE.markers[i].clear();
+                }
+                renderGrid();
+            }
+        }
+
+        // 修复：回溯可视化时，确保空格子能正确显示数字
+        async function hybridBacktrack(flatBoard, constraints) {
+            if (!STATE.isSolving) return true;
+            STATE.recursionCount++;
+
+            let minCandidates = 10;
+            let bestR = -1, bestC = -1;
+            for (let i = 0; i < 81; i++) {
+                if (flatBoard[i] !== 0) continue;
+                const r = (i / 9) | 0;
+                const c = i % 9;
+                const candidates = getValidCandidates(flatBoard, r, c, constraints);
+                if (candidates.length < minCandidates) {
+                    minCandidates = candidates.length;
+                    bestR = r;
+                    bestC = c;
+                    if (minCandidates === 1) break;
+                    if (minCandidates === 0) return false;
+                }
+            }
+
+            if (bestR === -1) {
+                STATE.solutions.push([...flatBoard]);
+                return STATE.solutions.length >= SOLVER_CONFIG.maxSolutions;
+            }
+
+            const bestIdx = bestR * 9 + bestC;
+            const candidates = getValidCandidates(flatBoard, bestR, bestC, constraints);
+            const cells = document.querySelectorAll('.cell');
+
+            for (let i = 0; i < candidates.length; i++) {
+                const num = candidates[i];
+                if (!STATE.isSolving || STATE.solutions.length >= SOLVER_CONFIG.maxSolutions) return true;
+                
+                flatBoard[bestIdx] = num;
+
+                if (STATE.visualizeProcess) {
+                    STATE.grid[bestIdx] = num;
+                    const cell = cells[bestIdx];
+                    // 清除标记数，避免和数字重叠
+                    cell.querySelector('.markers-container')?.remove();
+                    // 检查是否有主数字span，没有就创建
+                    let numSpan = cell.querySelector('.main-number');
+                    if (!numSpan) {
+                        numSpan = document.createElement('span');
+                        numSpan.className = 'main-number';
+                        cell.appendChild(numSpan);
+                    }
+                    numSpan.innerText = num;
+                    cell.classList.add('solving');
+                    
+                    await sleep(1000 / STATE.solveSpeed);
+                    
+                    cell.classList.remove('solving');
+                }
+
+                const tempBoard = [...flatBoard];
+                const inferenceResult = fullLogicInference(tempBoard, constraints);
+                
+                if (inferenceResult !== -1) {
+                    let hasConflict = false;
+                    for (let j = 0; j < 81; j++) {
+                        if (tempBoard[j] !== 0) {
+                            const val = tempBoard[j];
+                            tempBoard[j] = 0;
+                            if (!isValidPlacement(tempBoard, (j/9)|0, j%9, val, constraints)) {
+                                hasConflict = true;
+                                tempBoard[j] = val;
+                                break;
+                            }
+                            tempBoard[j] = val;
+                        }
+                    }
+
+                    if (!hasConflict) {
+                        if (await hybridBacktrack(tempBoard, constraints)) {
+                            return true;
+                        }
+                    }
+                }
+
+                flatBoard[bestIdx] = 0;
+                if (STATE.visualizeProcess) {
+                    STATE.grid[bestIdx] = 0;
+                    const cell = cells[bestIdx];
+                    // 清除数字span
+                    const numSpan = cell.querySelector('.main-number');
+                    if (numSpan) numSpan.remove();
+                    // 重新创建标记容器
+                    const markersContainer = document.createElement('div');
+                    markersContainer.className = 'markers-container';
+                    for (let num = 1; num <= 9; num++) {
+                        const markerSpan = document.createElement('span');
+                        markerSpan.className = 'marker-num';
+                        markersContainer.appendChild(markerSpan);
+                    }
+                    cell.appendChild(markersContainer);
+                }
+            }
+
+            return false;
+        }
+
+        // 完整合法性校验
+        function isValidPlacement(flatBoard, r, c, num, constraints) {
+            const idx = r * 9 + c;
+            if (!isValidBasic(flatBoard, r, c, num)) return false;
+
+            // 对角线数独
+            if (constraints.type === 'diagonal') {
+                if (r === c) {
+                    for (let i = 0; i < 9; i++) if (flatBoard[i*9+i] === num) return false;
+                }
+                if (r + c === 8) {
+                    for (let i = 0; i < 9; i++) if (flatBoard[i*9+(8-i)] === num) return false;
+                }
+            }
+
+            // 无马数独
+            if (constraints.type === 'knight') {
+                const deltas = [[-2,-1],[-2,1],[2,-1],[2,1],[-1,-2],[-1,2],[1,-2],[1,2]];
+                for (let i = 0; i < deltas.length; i++) {
+                    const [dr, dc] = deltas[i];
+                    const nr = r + dr, nc = c + dc;
+                    if (nr >=0 && nr <9 && nc >=0 && nc <9) {
+                        if (flatBoard[nr*9+nc] === num) return false;
+                    }
+                }
+            }
+
+            // 奇偶数独
+            if (constraints.type === 'odd_even') {
+                const p = constraints.parity[idx];
+                if (p === 'odd' && num % 2 === 0) return false;
+                if (p === 'even' && num % 2 === 1) return false;
+            }
+
+            // 连续数独
+            if (constraints.type === 'continuous') {
+                const adjacentDeltas = [[-1,0],[1,0],[0,-1],[0,1]];
+                for (let i = 0; i < adjacentDeltas.length; i++) {
+                    const [dr, dc] = adjacentDeltas[i];
+                    const nr = r + dr, nc = c + dc;
+                    if (nr <0 || nr >=9 || nc <0 || nc >=9) continue;
+                    const neighborNum = flatBoard[nr*9+nc];
+                    if (neighborNum === 0) continue;
+
+                    const neighborIdx = nr *9 + nc;
+                    const key = [Math.min(idx, neighborIdx), Math.max(idx, neighborIdx)].join('-');
+                    const hasContinuousEdge = constraints.continuous.has(key);
+
+                    const diff = Math.abs(num - neighborNum);
+                    if (hasContinuousEdge) {
+                        if (diff !== 1) return false;
+                    } else {
+                        if (diff === 1) return false;
+                    }
+                }
+            }
+
+            // 杀手数独
+            if (constraints.type === 'killer') {
+                const cage = cellToCageMap[idx];
+                if (cage) {
+                    for (let i = 0; i < cage.idxs.length; i++) {
+                        if (flatBoard[cage.idxs[i]] === num) return false;
+                    }
+                    let sum = num;
+                    let empty = 0;
+                    for (let i = 0; i < cage.idxs.length; i++) {
+                        const cellIdx = cage.idxs[i];
+                        if (cellIdx !== idx) {
+                            if (flatBoard[cellIdx] === 0) empty++;
+                            else sum += flatBoard[cellIdx];
+                        }
+                    }
+                    if (sum > cage.sum) return false;
+                    if (empty === 0 && sum !== cage.sum) return false;
+                }
+            }
+
+            // 温度计数独
+            if (constraints.type === 'thermometer') {
+                if (!checkThermometerConstraint(flatBoard, r, c, num)) return false;
+            }
+
+            // 德耳语数独
+            if (constraints.type === 'whispers') {
+                if (!checkWhispersConstraint(flatBoard, r, c, num)) return false;
+            }
+
+            return true;
+        }
+
+    </script>
+</body>
+</html>
