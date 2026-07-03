@@ -2,6 +2,11 @@
 
 一个单文件的多变种数独求解器，适合直接在浏览器中打开使用，也可以部署到 GitHub Pages。
 
+## 在线访问
+
+- 在线体验：https://6279jie.github.io/puzzle/
+- 仓库地址：https://github.com/6279jie/puzzle
+
 ## 功能概览
 
 - 经典数独
@@ -31,10 +36,7 @@
 
 - `index.html`：默认发布入口，适合 GitHub Pages
 - `puzzle.html`：原始求解器文件
-
-## 发布建议
-
-如果发布到 GitHub Pages，建议使用仓库根目录下的 `index.html` 作为首页文件。
+- `.nojekyll`：禁用 Jekyll 构建，按静态文件方式发布
 
 ## 许可证
 
